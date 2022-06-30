@@ -1,0 +1,271 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xs3site.aws.hosting.example.org
+  labels:
+    provider: aws
+spec:
+  compositeTypeRef:
+    apiVersion: hosting.example.org/v1alpha1
+    kind: XS3site
+  patchSets:
+  - name: metadata
+    patches:
+    - fromFieldPath: metadata.name
+    - fromFieldPath: metadata.labels
+  resources:
+    - name: bucket
+      base:
+        apiVersion: s3.aws.crossplane.io/v1beta1
+        kind: Bucket
+        spec:
+          forProvider:
+            locationConstraint: us-east-1
+            acl: private
+          providerConfigRef:
+            name: aws-provider
+      patches:
+      - type: PatchSet
+        patchSetName: metadata
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.arn
+        toFieldPath: status.bucket.arn
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.arn
+        toFieldPath: status.bucket.name
+        transforms:
+          - type: string
+            string:
+              type: TrimPrefix
+              trim: 'arn:aws:s3:::'
+    - name: bucketpolicy-cloudfront-oai
+      base:
+        apiVersion: s3.aws.crossplane.io/v1alpha3
+        kind: BucketPolicy
+        metadata:
+          name: bucketpolicy-cloudfront-oai
+        spec:
+          forProvider:
+            region: us-east-1
+            policy:
+              version: '2012-10-17'
+              statements:
+                - action:
+                    - s3:GetObject
+                  effect: Allow
+          providerConfigRef:
+            name: aws-provider
+      patches:
+      - type: FromCompositeFieldPath
+        fromFieldPath: status.cloudFront.oaiArn
+        toFieldPath: spec.forProvider.policy.statements[0].principal.awsPrincipals[0].iamUserArn
+        policy:
+          fromFieldPath: Required
+      - type: FromCompositeFieldPath
+        fromFieldPath: status.bucket.arn
+        toFieldPath: spec.forProvider.policy.statements[0].resource[0]
+        transforms:
+        - type: string
+          string:
+            fmt: "%s/*"
+        policy:
+          fromFieldPath: Required
+      - type: FromCompositeFieldPath
+        fromFieldPath: status.bucket.name
+        toFieldPath: spec.forProvider.bucketName
+        policy:
+          fromFieldPath: Required
+      - type: PatchSet
+        patchSetName: metadata
+    - name: acm-cert
+      base:
+        apiVersion: acm.aws.crossplane.io/v1alpha1
+        kind: Certificate
+        spec:
+          forProvider:
+            region: us-east-1
+            validationMethod: DNS
+            tags:
+            - key: Name
+          providerConfigRef:
+            name: aws-provider
+      patches:
+      - type: PatchSet
+        patchSetName: metadata
+      - type: CombineFromComposite
+        combine:
+          variables:
+          - fromFieldPath: spec.parameters.subDomain
+          - fromFieldPath: spec.parameters.parentDomain
+          strategy: string
+          string:
+            fmt: "%s.%s"
+        toFieldPath: spec.forProvider.domainName
+      - fromFieldPath: metadata.name
+        toFieldPath: spec.forProvider.tags[0].value
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.resourceRecord.name
+        toFieldPath: status.resourceRecord.name
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.resourceRecord.value
+        toFieldPath: status.resourceRecord.value
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.certificateARN
+        toFieldPath: status.cert.certArn
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.status
+        toFieldPath: status.cert.certStatus
+    - name: dns-validation-record
+      base:
+        apiVersion: route53.aws.crossplane.io/v1alpha1
+        kind: ResourceRecordSet
+        spec:
+          providerConfigRef:
+            name: aws-provider
+          forProvider:
+            type: CNAME
+            ttl: 300
+      patches:
+      - type: PatchSet
+        patchSetName: metadata
+      - fromFieldPath: spec.parameters.zoneId
+        toFieldPath: spec.forProvider.zoneId
+      - fromFieldPath: status.resourceRecord.name
+        toFieldPath: metadata.annotations[crossplane.io/external-name]
+      - fromFieldPath: status.resourceRecord.value
+        toFieldPath: spec.forProvider.resourceRecords[0].value
+        policy:
+          fromFieldPath: Required
+    - name: cloudfront-oai
+      base:
+        apiVersion: cloudfront.aws.crossplane.io/v1alpha1
+        kind: CloudFrontOriginAccessIdentity
+        spec:
+          providerConfigRef:
+            name: aws-provider
+          forProvider:
+            region: us-east-1
+            cloudFrontOriginAccessIdentityConfig:
+              comment: "Static Site Origin Access Identity"
+      patches:
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.cloudFrontOriginAccessIdentity.id
+          toFieldPath: status.cloudFront.originAccessIdentity
+        - type: ToCompositeFieldPath
+          fromFieldPath: status.atProvider.cloudFrontOriginAccessIdentity.id
+          toFieldPath: status.cloudFront.oaiArn
+          transforms:
+          - type: string
+            string:
+              fmt: "arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity %s"
+    - name: cloudfront
+      base:
+        apiVersion: cloudfront.aws.crossplane.io/v1alpha1
+        kind: Distribution
+        spec:
+          providerConfigRef:
+            name: aws-provider
+          forProvider:
+            region: us-east-1
+            distributionConfig:
+              enabled: true
+              comment: "Simple static web site using S3 and Cloudfront"
+              defaultRootObject: index.html
+              aliases:
+                quantity: 1
+                items:
+                - ""
+              viewerCertificate:
+                sslSupportMethod: sni-only
+                cloudFrontDefaultCertificate: false
+              origins:
+                items:
+                - domainName: ""
+                  id: s3Origin
+                  s3OriginConfig:
+                    originAccessIDentity: ""
+              defaultCacheBehavior:
+                targetOriginID: s3Origin
+                viewerProtocolPolicy: redirect-to-https
+                compress: true
+                allowedMethods:
+                  items: ["GET", "HEAD", "OPTIONS"]
+                  quantity: 3
+                cachedMethods:
+                  items: ["GET", "HEAD", "OPTIONS"]
+                  quantity: 3
+                cachePolicyID: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # CachingDisabled (AWS Managed Cache Policy)
+              # defaultCacheBehavior:
+              #   targetOriginID: s3Origin
+              #   viewerProtocolPolicy: allow-all
+              #   minTTL: 0
+              #   forwardedValues:
+              #     cookies:
+              #       forward: none
+              #     queryString: false
+      patches:
+      - type: PatchSet
+        patchSetName: metadata
+      - fromFieldPath: status.cloudFront.originAccessIdentity
+        toFieldPath: spec.forProvider.distributionConfig.origins.items[0].s3OriginConfig.originAccessIdentity
+        transforms:
+        - type: string
+          string:
+            fmt: "origin-access-identity/cloudfront/%s"
+        policy:
+          fromFieldPath: Required
+      - fromFieldPath: spec.parameters.enabled
+        toFieldPath: spec.forProvider.distributionConfig.enabled
+      - type: CombineFromComposite
+        combine:
+          variables:
+          - fromFieldPath: spec.parameters.subDomain
+          - fromFieldPath: spec.parameters.parentDomain
+          strategy: string
+          string:
+            fmt: "%s.%s"
+        toFieldPath: spec.forProvider.distributionConfig.aliases.items[0]
+      - type: CombineFromComposite
+        combine:
+          variables:
+          - fromFieldPath: status.bucket.name
+          strategy: string
+          string:
+            fmt: "%s.s3.us-east-1.amazonaws.com"
+        toFieldPath: spec.forProvider.distributionConfig.origins.items[0].domainName
+      - fromFieldPath: status.cert.certArn
+        toFieldPath: spec.forProvider.distributionConfig.viewerCertificate.aCMCertificateARN
+      - type: ToCompositeFieldPath
+        fromFieldPath: status.atProvider.distribution.domainName
+        toFieldPath: status.cloudFront.domain
+    - name: a-record
+      base:
+        apiVersion: route53.aws.crossplane.io/v1alpha1
+        kind: ResourceRecordSet
+        spec:
+          providerConfigRef:
+            name: aws-provider
+          forProvider:
+            type: A
+            aliasTarget:
+              dnsName: ""
+              evaluateTargetHealth: false
+              hostedZoneId: Z2FDTNDATAQYW2 # required zone for cloudfront
+      patches:
+      # - type: PatchSet
+      #   patchSetName: metadata
+      - type: CombineFromComposite
+        combine:
+          variables:
+          - fromFieldPath: spec.parameters.subDomain
+          - fromFieldPath: spec.parameters.parentDomain
+          strategy: string
+          string:
+            fmt: "%s.%s"
+        toFieldPath: metadata.name
+      - fromFieldPath: spec.parameters.zoneId
+        toFieldPath: spec.forProvider.zoneId
+      - fromFieldPath: status.cloudFront.domain
+        toFieldPath: spec.forProvider.aliasTarget.dnsName
+        policy:
+          fromFieldPath: Required

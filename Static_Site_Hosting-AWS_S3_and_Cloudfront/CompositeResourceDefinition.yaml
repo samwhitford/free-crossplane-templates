@@ -1,0 +1,92 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xs3sites.hosting.example.org
+spec:
+  group: hosting.example.org
+  names:
+    kind: XS3site
+    plural: xs3sites
+  claimNames:
+    kind: S3site
+    plural: s3sites
+  versions:
+  - name: v1alpha1
+    served: true
+    referenceable: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              parameters:
+                type: object
+                properties:
+                  subDomain:
+                    type: string
+                    description: The sub domain for your website
+                  parentDomain:
+                    type: string
+                    description: The sub domain for your website
+                  zoneId:
+                    type: string
+                    description: ID of the hosted zone to place your domain name. 
+                  enabled:
+                    type: boolean
+                    description: True when the distribution is active. Set to false before deleting a dist. 
+                  # description:
+                  #   type: string
+                  # defaultRootObject:
+                  #   type: string
+                  # cacheTTL:
+                  #   type: object
+                  #   properties:
+                  #     max:
+                  #       type: integer
+                  #     min:
+                  #       type: integer
+                  #     default: 
+                  #       type: integer
+                  # cacheConfig:
+                  #   type: object
+                required:
+                - subDomain
+                - parentDomain
+                - zoneId
+            required:
+            - parameters
+          status:
+            type: object
+            properties:
+              cert:
+                type: object
+                properties:
+                  certArn:
+                    type: string
+                  certStatus:
+                    type: string
+              cloudFront:
+                type: object
+                properties:
+                  domain:
+                    type: string
+                  originAccessIdentity:
+                    type: string
+                  oaiArn:
+                    type: string
+              bucket:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  arn: 
+                    type: string
+              resourceRecord:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  value: 
+                    type: string

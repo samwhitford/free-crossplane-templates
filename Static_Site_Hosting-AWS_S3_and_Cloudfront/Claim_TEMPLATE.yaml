@@ -1,0 +1,21 @@
+apiVersion: hosting.example.org/v1alpha1
+kind: S3site
+metadata:
+  name: StaticSiteHosting
+  namespace: default
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: aws
+  parameters:
+    subDomain: blog # Change this to be the desired subdomain you would like associated with this composition claim
+    parentDomain: example.com # Change this to be a Zone you control via AWS Route53
+    zoneId: Z23ABC4XYZL05B # Change this to reflect the Route53 zone ID for the parent domain listed above
+    enabled: true
+#    description:
+#    defaultRootObject: index.html
+#    cacheTTL:
+#      max:
+#      min:
+#      default:
+#    cacheConfig:
